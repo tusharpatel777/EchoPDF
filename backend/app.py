@@ -1,5 +1,4 @@
 import os
-import whisper
 import fitz  # PyMuPDF
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import StreamingResponse
@@ -29,15 +28,23 @@ app.add_middleware(
 # 1. Initialization
 pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
 index_name = os.getenv("PINECONE_INDEX")
+# Using a lighter embedding model to fit in 512MB RAM
 embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 vector_store = PineconeVectorStore(index_name=index_name, embedding=embeddings)
 
 redis = Redis(url=os.getenv("UPSTASH_REDIS_URL"), token=os.getenv("UPSTASH_REDIS_TOKEN"))
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-whisper_model = whisper.load_model("base")
-ranker = Ranker()
 
-# Store BM25 instances in memory for hybrid search (simplified for demo)
+# Global Ranker instance (initialized on first use to save RAM during startup)
+_ranker = None
+
+def get_ranker():
+    global _ranker
+    if _ranker is None:
+        _ranker = Ranker(model_name="ms-marco-TinyBERT-L-2-v2", cache_dir="/tmp")
+    return _ranker
+
+# Store BM25 instances in memory for hybrid search
 bm25_store = {}
 
 @app.post("/upload_pdf")
@@ -74,10 +81,19 @@ async def upload(file: UploadFile = File(...)):
 
 @app.post("/chat_stream")
 async def chat(audio: UploadFile = File(None), text_query: str = Form(None), filename: str = Form(None)):
-    # A. Input Handling (Voice or Text)
+    # A. Input Handling (Voice via Groq API or Text)
     if audio:
-        with open("temp.wav", "wb") as f: f.write(await audio.read())
-        user_query = whisper_model.transcribe("temp.wav")["text"]
+        try:
+            audio_content = await audio.read()
+            # Use Groq's Whisper API for ultra-fast, RAM-free transcription
+            transcription = groq_client.audio.transcriptions.create(
+                file=("temp.wav", audio_content),
+                model="whisper-large-v3-turbo",
+                response_format="json",
+            )
+            user_query = transcription.text
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Voice transcription failed: {str(e)}")
     else:
         user_query = text_query
 
@@ -91,10 +107,8 @@ async def chat(audio: UploadFile = File(None), text_query: str = Form(None), fil
         return {"reply": cached_res.decode(), "source": "cache"}
 
     # C. Advanced RAG (Hybrid + Reranking)
-    # 1. Vector Search
     vector_results = vector_store.similarity_search(user_query, k=10)
     
-    # 2. BM25 Search (if filename provided and indexed)
     bm25_results = []
     if filename in bm25_store:
         tokenized_query = user_query.split(" ")
@@ -114,14 +128,17 @@ async def chat(audio: UploadFile = File(None), text_query: str = Form(None), fil
     for doc in bm25_results:
         candidates.append(doc)
 
-    # Dedup and Rerank with FlashRank
-    rerank_request = RerankRequest(query=user_query, passages=candidates)
-    results = ranker.rerank(rerank_request)
+    # Rerank with FlashRank (Lazy loaded)
+    try:
+        ranker = get_ranker()
+        rerank_request = RerankRequest(query=user_query, passages=candidates)
+        results = ranker.rerank(rerank_request)
+        top_docs = results[:5]
+    except:
+        # Fallback if reranker fails (e.g. memory limit)
+        top_docs = candidates[:5]
     
-    # Take top 5 reranked results
-    top_docs = results[:5]
     context = "\n".join([d['text'] for d in top_docs])
-    sources = [{"page": d['meta']['page'], "snippet": d['text'][:100] + "..."} for d in top_docs]
 
     # D. Streaming Response
     async def stream_and_cache():
@@ -140,7 +157,7 @@ async def chat(audio: UploadFile = File(None), text_query: str = Form(None), fil
                 full_reply += content
                 yield content
         
-        # Save to Redis
         redis.setex(cache_key, 3600, full_reply)
 
-    return StreamingResponse(stream_and_cache(), media_type="text/plain")
+    return StreamingResponse(stream_and_cache(), media_type="text/plain")
+
