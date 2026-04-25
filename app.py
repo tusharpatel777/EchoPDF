@@ -1,12 +1,14 @@
 import os
-import base64
 import whisper
+import base64
 from fastapi import FastAPI, UploadFile, File, Form
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse
 from groq import Groq
 from PyPDF2 import PdfReader
-from langchain_community.vectorstores import FAISS
+from upstash_redis import Redis
+from pinecone import Pinecone
+from langchain_pinecone import PineconeVectorStore
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from gtts import gTTS
@@ -17,55 +19,62 @@ load_dotenv()
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Models Setup
-whisper_model = whisper.load_model("base")
+# 1. Initialization
+pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
+index_name = os.getenv("PINECONE_INDEX")
 embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-vector_db = None
+vector_store = PineconeVectorStore(index_name=index_name, embedding=embeddings)
 
-@app.get("/")
-async def root():
-    from fastapi.responses import FileResponse
-    return FileResponse('static/index.html')
+redis = Redis(url=os.getenv("UPSTASH_REDIS_URL"), token=os.getenv("UPSTASH_REDIS_TOKEN"))
+groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+whisper_model = whisper.load_model("base")
 
+# 2. Endpoints
 @app.post("/upload_pdf")
-async def upload_pdf(file: UploadFile = File(...)):
-    global vector_db
+async def upload(file: UploadFile = File(...)):
     content = await file.read()
-    pdf_reader = PdfReader(BytesIO(content))
-    text = "".join([page.extract_text() for page in pdf_reader.pages])
+    pdf = PdfReader(BytesIO(content))
+    text = "".join([page.extract_text() for page in pdf.pages])
     
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     chunks = splitter.split_text(text)
-    vector_db = FAISS.from_texts(chunks, embeddings)
-    return {"message": "PDF Ready!"}
+    
+    # Cloud indexing (Pinecone)
+    vector_store.add_texts(chunks)
+    return {"message": "Cloud Indexing Complete!"}
 
-@app.post("/chat")
+@app.post("/chat_stream")
 async def chat(audio: UploadFile = File(...)):
-    global vector_db
-    # 1. Save Audio & Transcribe
-    with open("temp_audio.wav", "wb") as f:
-        f.write(await audio.read())
-    
-    result = whisper_model.transcribe("temp_audio.wav")
-    user_query = result["text"]
+    # A. Whisper (Speech to Text)
+    with open("temp.wav", "wb") as f: f.write(await audio.read())
+    user_query = whisper_model.transcribe("temp.wav")["text"]
 
-    # 2. RAG & Groq
-    docs = vector_db.similarity_search(user_query, k=3)
+    # B. Redis Caching (Check if already answered)
+    cache_key = f"cache:{user_query.lower().strip()}"
+    cached_res = redis.get(cache_key)
+    if cached_res:
+        return {"reply": cached_res.decode(), "source": "cache"}
+
+    # C. RAG (Pinecone Search)
+    docs = vector_store.similarity_search(user_query, k=3)
     context = "\n".join([d.page_content for d in docs])
-    
-    completion = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "system", "content": f"Answer based on context: {context}"},
-                  {"role": "user", "content": user_query}]
-    )
-    ai_reply = completion.choices[0].message.content
 
-    # 3. TTS to Base64
-    tts = gTTS(ai_reply)
-    mp3_fp = BytesIO()
-    tts.write_to_fp(mp3_fp)
-    mp3_fp.seek(0)
-    audio_base64 = base64.b64encode(mp3_fp.read()).decode('utf-8')
+    # D. Streaming Response from Groq
+    async def stream_and_cache():
+        full_reply = ""
+        stream = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "system", "content": f"Context: {context}"},
+                      {"role": "user", "content": user_query}],
+            stream=True
+        )
+        for chunk in stream:
+            content = chunk.choices[0].delta.content
+            if content:
+                full_reply += content
+                yield content
+        
+        # Save to Redis for future
+        redis.setex(cache_key, 3600, full_reply) # 1 hour cache
 
-    return {"reply": ai_reply, "audio_base64": audio_base64}
+    return StreamingResponse(stream_and_cache(), media_type="text/plain")

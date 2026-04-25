@@ -4,10 +4,11 @@ python-multipart
 groq
 openai-whisper
 PyPDF2
-langchain
-langchain-community
+pinecone-client
+langchain-pinecone
 langchain-huggingface
-faiss-cpu
 sentence-transformers
 gtts
+upstash-redis
 python-dotenv
+flashrank

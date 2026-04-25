@@ -46,3 +46,28 @@ recordBtn.onmouseup = async () => {
         audio.play();
     };
 };
+async function startStreamingChat(audioBlob) {
+    const formData = new FormData();
+    formData.append("audio", audioBlob);
+
+    const response = await fetch("/chat_stream", { method: "POST", body: formData });
+    
+    // Check if it's cached or streaming
+    if (response.headers.get("content-type") === "application/json") {
+        const data = await response.json();
+        updateUI(data.reply); // Fast cache hit
+        return;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let fullText = "";
+
+    while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value);
+        fullText += chunk;
+        document.getElementById("responseArea").innerText = fullText; // Live update
+    }
+}
