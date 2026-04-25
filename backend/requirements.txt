@@ -1,0 +1,17 @@
+fastapi
+uvicorn
+python-multipart
+groq
+openai-whisper
+pymupdf
+pinecone-client
+langchain-pinecone
+langchain-huggingface
+langchain-community
+sentence-transformers
+rank_bm25
+gtts
+upstash-redis
+python-dotenv
+flashrank
+websockets

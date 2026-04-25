@@ -1,8 +1,0 @@
-body { font-family: 'Arial', sans-serif; background: #f4f7f6; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-.container { background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); text-align: center; width: 400px; }
-h1 { color: #333; }
-button { background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin-top: 10px; transition: 0.3s; }
-button:hover { background: #0056b3; }
-#recordBtn { background: #dc3545; width: 100%; font-size: 1.2rem; padding: 20px; }
-#recordBtn:active { background: #a71d2a; transform: scale(0.98); }
-.section { margin-bottom: 20px; padding-bottom: 20px; border-bottom: 1px solid #eee; }
