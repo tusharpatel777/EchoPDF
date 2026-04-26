@@ -14,5 +14,4 @@ upstash-redis
 python-dotenv
 flashrank
 websockets
-
-
+google-genai
