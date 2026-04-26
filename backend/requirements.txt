@@ -7,6 +7,7 @@ pinecone-client
 langchain-pinecone
 langchain-huggingface
 langchain-community
+langchain-text-splitters
 sentence-transformers
 rank_bm25
 upstash-redis
@@ -14,4 +15,4 @@ python-dotenv
 flashrank
 websockets
 
-
+
