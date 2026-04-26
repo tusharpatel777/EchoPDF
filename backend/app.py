@@ -11,7 +11,6 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from flashrank import Ranker, RerankRequest
 from rank_bm25 import BM25Okapi
-from io import BytesIO
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -32,7 +31,7 @@ index_name = os.getenv("PINECONE_INDEX")
 embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 vector_store = PineconeVectorStore(index_name=index_name, embedding=embeddings)
 
-redis = Redis(url=os.getenv("UPSTASH_REDIS_URL"), token=os.getenv("UPSTASH_REDIS_TOKEN"))
+redis = Redis(url=os.getenv("UPSTASH_REDIS_REST_URL"), token=os.getenv("UPSTASH_REDIS_REST_TOKEN"))
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 # Global Ranker instance (initialized on first use to save RAM during startup)
@@ -104,7 +103,7 @@ async def chat(audio: UploadFile = File(None), text_query: str = Form(None), fil
     cache_key = f"cache:{user_query.lower().strip()}"
     cached_res = redis.get(cache_key)
     if cached_res:
-        return {"reply": cached_res.decode(), "source": "cache"}
+        return {"reply": cached_res, "source": "cache"}
 
     # C. Advanced RAG (Hybrid + Reranking)
     vector_results = vector_store.similarity_search(user_query, k=10)
