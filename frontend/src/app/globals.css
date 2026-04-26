@@ -168,7 +168,8 @@ body {
   text-align: right;
 }
 
-.md-code-inline {
+/* Inline code — default style for all <code> elements */
+.md-code {
   font-family: 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
   font-size: 0.8rem;
   background: rgba(0, 243, 255, 0.08);
@@ -178,19 +179,20 @@ body {
   padding: 0.1em 0.45em;
 }
 
+/* Code block — <pre> wraps fenced blocks; reset inline styles inside */
 .md-pre {
   margin: 0.75rem 0;
+  padding: 1rem 1.1rem;
   border-radius: 0.75rem;
-  overflow: hidden;
+  overflow-x: auto;
   background: rgba(0, 0, 0, 0.45);
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
-.md-code-block-wrapper {
-  padding: 1rem 1.1rem;
-  overflow-x: auto;
-}
-.md-code-block {
-  font-family: 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+.md-pre .md-code {
+  background: none;
+  border: none;
+  border-radius: 0;
+  padding: 0;
   font-size: 0.78rem;
   line-height: 1.7;
   color: #a5f3fc;
